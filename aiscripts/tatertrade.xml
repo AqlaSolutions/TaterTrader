@@ -10,6 +10,7 @@
       </param>
       <param name="returnhome" type="bool" default="false" text="{3282837,102}" comment="Return Home after completing a trade?" />
       <!-- Some Range configurations -->
+      <param name="buyRangeFromShip" type="bool" default="false" text="Buy range from ship? (instead of home)" comment="Buy range from ship? (instead of home)" />
       <param name="minbuy" default="0" type="number" advanced="true" text="{1041, 10066}" comment="Min gate distance to buy. Buy range supported if $minbuy and $maxbuy are provided">
         <input_param name="startvalue" value="0"/>
         <input_param name="min" value="0"/>
@@ -22,6 +23,7 @@
         <input_param name="max" value="[@this.ship.commander.tradenpc.skill.management, @this.ship.pilot.skill.piloting].max * 2"/>
         <input_param name="step" value="1"/>
       </param>
+      <param name="sellRangeFromShip" type="bool" default="false" text="Sell range from ship? (instead of home)" comment="Sell range from ship? (instead of home)" />
       <param name="minsell" default="0" type="number" advanced="true" text="{1041, 10068}" comment="Min gate distance to sell. Sell range supported if $minsell and $maxsell are provided">
         <input_param name="startvalue" value="0"/>
         <input_param name="min" value="0"/>
@@ -57,6 +59,7 @@
       <param name="fasttrade" type="bool" default="false" text="{3282837,108}" comment="Attempt to optimise the search engine by skipping deals we deem improfitable." />
       <param name="stationmode" type="bool" default="false" text="{3282837,109}" comment="When enabled, toggles the trader into station trader mode." />
       <param name="blackmarket" type="bool" default="false" text="{3282837,110}" comment="When enabled, allows the trader to trade illegal wares when in station trader mode." />
+      <param name="onlyPlayerStations" type="bool" default="false" text="Home sector: player only stations are served in station mode" comment="Serve only player stations in home sector?" />
 
       <!-- What are we hauling? -->
       <param name="warebasket" default="[]" type="list" text="{1041, 10146}" comment="Wares">
@@ -470,11 +473,24 @@
           <set_object_commander object="this.ship" commander="$home" />
         </do_if>
       </do_if>
-      
+
       <!-- Scan for sectors based on the range settings. -->
-      <find_cluster_in_range distances="$clusterstable" multiple="true" object="$range" mindistance="$minbuy" maxdistance="$maxbuy"/>
+      <do_if value="$buyRangeFromShip">
+        <set_value name="$buyRange" exact="this.ship.sector" />
+      </do_if>
+      <do_else>
+        <set_value name="$buyRange" exact="$range" />
+       </do_else>
+      <find_cluster_in_range distances="$clusterstable" multiple="true" object="$buyRange" mindistance="$minbuy" maxdistance="$maxbuy"/>
       <set_value name="$buyspaces" exact="$clusterstable.keys.sorted" /> <!-- sort them -->
-      <find_cluster_in_range distances="$clusterstable" multiple="true" object="$range" mindistance="$minsell" maxdistance="$maxsell"/>
+
+      <do_if value="$sellRangeFromShip">
+        <set_value name="$sellRange" exact="this.ship.sector" />
+      </do_if>
+      <do_else>
+        <set_value name="$sellRange" exact="$range" />
+       </do_else>
+      <find_cluster_in_range distances="$clusterstable" multiple="true" object="$sellRange" mindistance="$minsell" maxdistance="$maxsell"/>
       <set_value name="$sellspaces" exact="$clusterstable.keys.sorted" /> <!-- sort them -->
       <remove_value name="$clusterstable"/>
 	  
@@ -489,7 +505,7 @@
                   </do_if>
 		<find_sector name="$blacklistsectorlisttocheck" space="$buyspaces.{$blacklistcounter1}" multiple="true" />
 		<do_all exact="$blacklistsectorlisttocheck.count" counter="$blacklistsectorcounter1" reverse="true">
-			<do_if value="($blacklistsectorlisttocheck.{$blacklistsectorcounter1} != $range) and (($blacklistsectorlisttocheck.{$blacklistsectorcounter1}.isblacklisted.{blacklisttype.sectoractivity}.{$blacklistgroup}.{this.assignedcontrolled}) or ($blacklistsectorlisttocheck.{$blacklistsectorcounter1}.isblacklisted.{blacklisttype.sectortravel}.{$blacklistgroup}.{this.assignedcontrolled}))">
+			<do_if value="($blacklistsectorlisttocheck.{$blacklistsectorcounter1} != $range) and ($blacklistsectorlisttocheck.{$blacklistsectorcounter1} != $buyRange) and ($blacklistsectorlisttocheck.{$blacklistsectorcounter1} != $sellRange) and (($blacklistsectorlisttocheck.{$blacklistsectorcounter1}.isblacklisted.{blacklisttype.sectoractivity}.{$blacklistgroup}.{this.assignedcontrolled}) or ($blacklistsectorlisttocheck.{$blacklistsectorcounter1}.isblacklisted.{blacklisttype.sectortravel}.{$blacklistgroup}.{this.assignedcontrolled}))">
 				<debug_to_file name="this.ship.idcode" directory="'TaterTrader'" text="'Removing ' + $buyspaces.{$blacklistcounter1}.knownname + ' from buyspaces - DA'" output="false" append="true" chance="if @$TaterDebugChance then ($TaterDebugChance * 100) else (0)"/>
 				<remove_value name="$buyspaces.{$blacklistcounter1}" />
 				<break/>
@@ -693,25 +709,63 @@
       </do_if>
 
       <!-- Now that we got rid of our cargo clutter lets start trading. -->
-      <do_if value="($stationmode or $blackmarket) and $home.isclass.container"> <!-- Have the station smuggler toggle also enable trader mode. -->
+      <do_if value="($stationmode or $blackmarket)"> <!-- Have the station smuggler toggle also enable trader mode. -->
         <!-- Station Trader mode -->
 
-        <!-- What is the station selling, if the stock gets too high we try to sell it. -->
-        <find_sell_offer seller="$home" result="$stationselloffers" multiple="true">
-        </find_sell_offer>
-
-        <!-- What is the station buying, we use this to figure out what the station needs. -->
-        <find_buy_offer buyer="$home" result="$stationbuyoffers" multiple="true">
-        </find_buy_offer>
-        
-        <!-- Lets add the build storage's offers to the list -->
-        <do_if value="not ($home.buildstorage == null)">
-          <find_buy_offer buyer="$home.buildstorage" result="$storagebuyoffers" multiple="true">
-          </find_buy_offer>
-          <do_all exact="$storagebuyoffers.count" counter="$buy">
-            <append_to_list name="$stationbuyoffers" exact="$storagebuyoffers.{$buy}"/>
-          </do_all>
+        <do_if value="$home.isclass.container">
+            <!-- What is the station selling, if the stock gets too high we try to sell it. -->
+            <find_sell_offer seller="$home" result="$stationselloffers" multiple="true">
+            </find_sell_offer>
+    
+            <!-- What is the station buying, we use this to figure out what the station needs. -->
+            <find_buy_offer buyer="$home" result="$stationbuyoffers" multiple="true">
+            </find_buy_offer>
+            
+            <!-- Lets add the build storage's offers to the list -->
+            <do_if value="not ($home.buildstorage == null)">
+              <find_buy_offer buyer="$home.buildstorage" result="$storagebuyoffers" multiple="true">
+              </find_buy_offer>
+              <do_all exact="$storagebuyoffers.count" counter="$buy">
+                <append_to_list name="$stationbuyoffers" exact="$storagebuyoffers.{$buy}"/>
+              </do_all>
+            </do_if>
         </do_if>
+        <do_else> <!-- Home is sector, all stations inside are home stations -->
+            <do_if value="$onlyPlayerStations">
+                <find_sell_offer space="$home" tradepartner="this.ship" result="$stationselloffers" multiple="true">
+                  <match_seller owner="this.ship.owner">
+                      <match_relation_to object="this.ship" relation="enemy" comparison="not"/>
+                      <match tradesknownto="this.owner"/>
+        			  <match_use_blacklist group="$blacklistgroup" type="blacklisttype.objectactivity" object="this.ship"/>
+                  </match_seller>
+                </find_sell_offer>
+        
+                <find_buy_offer space="$home" tradepartner="this.ship" result="$stationbuyoffers" multiple="true">
+                    <match_buyer owner="this.ship.owner">
+                        <match_relation_to object="this.ship" relation="enemy" comparison="not"/>
+                        <match tradesknownto="this.owner"/>
+            			<match_use_blacklist group="$blacklistgroup" type="blacklisttype.objectactivity" object="this.ship"/>
+                      </match_buyer>
+                </find_buy_offer>
+            </do_if>
+            <do_else>
+                <find_sell_offer space="$home" tradepartner="this.ship" result="$stationselloffers" multiple="true">
+                  <match_seller>
+                      <match_relation_to object="this.ship" relation="enemy" comparison="not"/>
+                      <match tradesknownto="this.owner"/>
+        			  <match_use_blacklist group="$blacklistgroup" type="blacklisttype.objectactivity" object="this.ship"/>
+                  </match_seller>
+                </find_sell_offer>
+        
+                <find_buy_offer space="$home" tradepartner="this.ship" result="$stationbuyoffers" multiple="true">
+                    <match_buyer>
+                        <match_relation_to object="this.ship" relation="enemy" comparison="not"/>
+                        <match tradesknownto="this.owner"/>
+            			<match_use_blacklist group="$blacklistgroup" type="blacklisttype.objectactivity" object="this.ship"/>
+                      </match_buyer>
+                </find_buy_offer>
+            </do_else>
+        </do_else>
 
         <debug_to_file name="this.ship.idcode" directory="'TaterTrader'" text="'Station has: '+$stationselloffers.count+' sell offers and '+$stationbuyoffers.count+' buy offers.'" output="false" append="true" chance="if @$TaterDebugChance then ($TaterDebugChance * 100) else (0)"/> 
 
@@ -874,7 +928,7 @@
         <do_if value="$stationbuyoffers.count gt 0">
           <do_all exact="$stationbuyoffers.count" counter="$offer">
             <set_value name="$stationbuyoffer" exact="$stationbuyoffers.{$offer}" />
-            <set_value name="$isbuildstorage" exact="$stationbuyoffer.buyer == $home.buildstorage" />
+            <set_value name="$isbuildstorage" exact="$stationbuyoffer.buyer.class == class.buildstorage" />
             <set_value name="$offerpriority" exact="$stationbuyoffer.stocklevel" /> <!-- I was inverting this, but the game already adjusts to whats needed. Not what is currently held. -->
             <set_value name="$offerpriority" exact="$offerpriority*100" />
             <set_value name="$minAmount" exact="[this.ship.cargo.{$stationbuyoffer.ware}.free * 0.8, stationbuyoffer.amount].min" />
@@ -1324,7 +1378,7 @@
             </do_if>
             <do_if value="$StationTrade"><!-- Make seperate log types depending what the trader is doing. -->
               <!-- Selling wares from the station. -->
-              <do_if value="$GrofferSell.seller == $home">
+              <do_if value="($home.isclass.container and $GrofferSell.seller == $home) or (not ($home.isclass.container) and $GrofferSell.seller.sector == $home)">
                 <do_if value="$GrofferSell.seller.owner == this.ship.owner">
                   <!-- Are We selling to a player station? -->
                   <do_if value="$GrofferBuy.buyer.owner == this.ship.owner">
@@ -1339,7 +1393,7 @@
                 </do_else>             
               </do_if>
               <!-- Buying wares for the station. -->
-              <do_if value="$GrofferBuy.buyer == $home">
+              <do_if value="($home.isclass.container and $GrofferBuy.buyer == $home) or (not ($home.isclass.container) and $GrofferBuy.buyer.sector == $home)">
                 <do_if value="$GrofferBuy.buyer.owner == this.ship.owner">
                   <!-- Are We buying from a player station? -->
                   <do_if value="not ($GrofferSell.seller.owner == this.ship.owner)">
